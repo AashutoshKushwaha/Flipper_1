@@ -1,0 +1,21 @@
+// Define the IR LED pin
+int irLedPin = 9;
+
+void setup() {
+  // Set the IR LED pin as output
+  pinMode(irLedPin, OUTPUT);
+}
+
+void loop() {
+  // Turn on the IR LED
+  digitalWrite(irLedPin, HIGH);
+  
+  // Wait for 1 second
+  delay(1000);
+  
+  // Turn off the IR LED
+  digitalWrite(irLedPin, LOW);
+  
+  // Wait for 1 second
+  delay(1000);
+}
