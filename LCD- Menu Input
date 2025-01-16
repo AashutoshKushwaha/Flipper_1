@@ -1,0 +1,172 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+#define SDO 3      // Data input pin
+#define SCL 4      // Clock output pin
+#define ONBOARDLED 13
+#define NKEYS 8    // 8 keys mode
+
+volatile word Kbdata = 0;     // Holds key data
+volatile byte keyPressed = 0; // Global variable to store the key number
+volatile bool keyFlag = false; // Flag to indicate a key press
+
+LiquidCrystal_I2C lcd(0x27, 16, 2); // Change 0x27 to the detected I2C address if necessary
+
+// Menu structure
+const char* mainMenu[] = {"Jammer", "Transmiiter", "Reciever"};
+const char* submenu1[] = {"frequency 1", "Frequency 2"};
+const char* submenu2[] = {"frequency 1", "Frequency 2", "Frequency 3"};
+const char* submenu3[] = {"Sub3 Item 1", "Sub3 Item 2"};
+struct Menu {
+  const char** items; // Pointer to array of menu items
+  int size;           // Number of items in the menu
+};
+
+Menu mainMenuStruct = {mainMenu, sizeof(mainMenu) / sizeof(mainMenu[0])};
+Menu submenus[] = {
+  {submenu1, sizeof(submenu1) / sizeof(submenu1[0])},
+  {submenu2, sizeof(submenu2) / sizeof(submenu2[0])},
+  {submenu3, sizeof(submenu3) / sizeof(submenu3[0])}
+};
+
+// State variables
+Menu* currentMenu = &mainMenuStruct; // Pointer to the current menu
+int currentItem = 0;                 // Currently highlighted item
+int topItem = 0;                     // Topmost visible item for scrolling
+Menu* menuStack[10];                 // Stack for menu navigation
+int stackIndex = 0;                  // Current position in the stack
+
+void setup() {
+  Serial.begin(9600);  // Initialize serial communication
+  while (!Serial);     // Wait for Serial to initialize
+  
+  pinMode(SCL, OUTPUT);  // Set SCL as output for clock signal
+  digitalWrite(SCL, 1);  // Set clock to high initially
+  
+  pinMode(SDO, INPUT);   // Set SDO as input to read data
+  pinMode(ONBOARDLED, OUTPUT);  // Set onboard LED as output for feedback
+  digitalWrite(ONBOARDLED, 0);  // LED off initially
+
+  // Enable interrupt on INT1 (pin 3 on most Arduino boards)
+  SREG |= 0x80;          // Global interrupt enable
+  EIMSK = 1 << INT1;     // Enable INT1 interrupt
+  EICRA &= 0x03;         // Interrupt trigger on low level
+
+  lcd.begin(16, 2);       // Initialize the LCD with 16x2 size
+  lcd.backlight();        // Turn on the LCD backlight
+  updateMenu();           // Display the initial menu
+}
+
+void loop() {
+  if (keyFlag) {
+    keyFlag = false; // Clear the flag
+
+    switch (keyPressed) {
+      case 2: // Scroll up
+        if (currentItem > 0) {
+          currentItem--;
+          if (currentItem < topItem) {
+            topItem--; // Adjust topItem for scrolling
+          }
+          updateMenu();
+        }
+        break;
+
+      case 6: // Scroll down
+        if (currentItem < currentMenu->size - 1) {
+          currentItem++;
+          if (currentItem >= topItem + 2) { // Adjust for 2-line display
+            topItem++;
+          }
+          updateMenu();
+        }
+        break;
+
+      case 1: // Select the current item
+        if (currentMenu == &mainMenuStruct) { // If in the main menu
+          if (currentItem < sizeof(submenus) / sizeof(submenus[0])) {
+            // Push current menu to stack
+            menuStack[stackIndex++] = currentMenu;
+            // Enter submenu
+            currentMenu = &submenus[currentItem];
+            currentItem = 0;
+            topItem = 0;
+            updateMenu();
+          }
+        } else {
+          // In submenu: display selected item temporarily
+          lcd.clear();
+          lcd.setCursor(0, 0);
+          lcd.print("Selected:");
+          lcd.setCursor(0, 1);
+          lcd.print(currentMenu->items[currentItem]);
+          delay(2000); // Show selection for 2 seconds
+          updateMenu(); // Return to menu
+        }
+        break;
+
+      case 3: // Go back to the parent menu
+        if (stackIndex > 0) {
+          currentMenu = menuStack[--stackIndex]; // Pop menu from stack
+          currentItem = 0;
+          topItem = 0;
+          updateMenu();
+        }
+        break;
+
+      default:
+        break;
+    }
+
+    Serial.print("Key Pressed: ");
+    Serial.println(keyPressed);
+  }
+}
+
+ISR(INT1_vect) {
+  byte i = 0;
+  EIMSK = 0;    // Disable interrupt during data reading
+  Kbdata = 0;   // Clear key data
+
+  // Read key bits from the TTP229 (8 keys mode)
+  for (i = 0; i < NKEYS; i++) {
+    digitalWrite(SCL, 0);  // Clock pulse low
+    digitalWrite(SCL, 1);  // Clock pulse high
+    Kbdata |= digitalRead(SDO) << i; // Read key data bit by bit
+  }
+
+  if (Kbdata != 0xffff) { 
+    Kbdata ^= 0xFFFF; // Invert the key data for better readability
+
+    // Find the first key that is pressed
+    for (i = 0; i < NKEYS; i++) {
+      if (Kbdata & (1 << i)) { // If the i-th key is pressed
+        keyPressed = i + 1;    // Save key number (1-indexed)
+        keyFlag = true;        // Set flag to update menu in loop()
+        break; // Exit the loop once a key is detected
+      }
+    }
+    digitalWrite(ONBOARDLED, 1); // Turn on LED
+  } else {
+    digitalWrite(ONBOARDLED, 0); // Turn off LED
+  }
+
+  EIMSK = 1 << INT1; // Re-enable interrupt
+}
+
+// Function to update the menu display
+void updateMenu() {
+  lcd.clear();
+  for (int i = 0; i < 2; i++) { // Display two lines of the menu
+    int itemIndex = topItem + i;
+    if (itemIndex < currentMenu->size) {
+      lcd.setCursor(0, i);
+      if (itemIndex == currentItem) {
+        lcd.print("> "); // Highlight the selected item
+      } else {
+        lcd.print("  "); // No highlight
+      }
+      lcd.print(currentMenu->items[itemIndex]);
+    }
+  }
+}
