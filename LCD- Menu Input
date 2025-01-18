@@ -1,3 +1,5 @@
+//touchpad sdo d3  scl d4
+//lcd sda a4 scl a5
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 
